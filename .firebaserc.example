@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "your-firebase-project"
+  },
+  "targets": {
+    "your-firebase-project": {
+      "hosting": {
+        "web": ["your-hosting-site"]
+      }
+    }
+  }
+}

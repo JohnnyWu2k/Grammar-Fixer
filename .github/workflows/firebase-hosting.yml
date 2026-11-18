@@ -1,0 +1,66 @@
+name: Validate and deploy Firebase Hosting
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosting-${{ github.event_name == 'push' && 'live' || github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test:rules
+      - run: bun run build
+      - name: Configure Firebase Hosting
+        if: >-
+          (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.FIREBASE_PROJECT_ID != '' && vars.FIREBASE_HOSTING_SITE != ''
+        env:
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          FIREBASE_HOSTING_SITE: ${{ vars.FIREBASE_HOSTING_SITE }}
+        run: |
+          bun -e '
+            const project = process.env.FIREBASE_PROJECT_ID;
+            const site = process.env.FIREBASE_HOSTING_SITE;
+            await Bun.write(".firebaserc", JSON.stringify({
+              projects: { default: project },
+              targets: { [project]: { hosting: { web: [site] } } }
+            }, null, 2));
+          '
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        if: >-
+          (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.FIREBASE_PROJECT_ID != '' && vars.FIREBASE_HOSTING_SITE != ''
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          channelId: ${{ github.event_name == 'push' && 'live' || '' }}
+          projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          target: web
