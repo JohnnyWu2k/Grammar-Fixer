@@ -5,15 +5,104 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
-      content="Grammend 正在準備中，文字校正功能即將推出。"
+      content="Grammend 免費本機文字校正：修正英文拼字與基本用字，還原切錯注音輸入法的文字。不需登入，文字不離開瀏覽器。"
     />
-    <title>Grammend — 開發中</title>
+    <meta name="theme-color" content="#f7f8f4" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Grammend — 讓文字，回到你的意思</title>
   </head>
   <body>
-    <main id="app">
-      <h1>Grammend</h1>
-      <p>網站開發中。</p>
-    </main>
+    <a class="skip-link" href="#source">跳到文字編輯器</a>
+    <div id="app">
+      <header class="site-header page-width">
+        <a class="brand" href="./" aria-label="Grammend 首頁">
+          <span class="brand-symbol" aria-hidden="true">g<span>·</span></span>
+          <span>grammend<span class="brand-period">.</span></span>
+        </a>
+        <nav aria-label="主要導覽">
+          <a href="#workspace">文字工作台</a>
+          <a href="#about">關於工具</a>
+          <span class="local-badge"><span class="status-dot"></span>本機運算</span>
+        </nav>
+      </header>
+      <main>
+        <section class="hero page-width" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow"><span></span>LESS TYPOS. MORE YOU.</p>
+            <h1 id="hero-title">讓文字，<br />回到<span class="highlight-word">你的意思<svg viewBox="0 0 300 14" aria-hidden="true"><path d="M3 9 Q145 -1 297 8" /></svg></span>。</h1>
+            <p class="hero-description">修正小錯字，也找回切錯輸入法的那句話。<br />不必登入、不用 AI，文字只留在你的瀏覽器。</p>
+            <div class="hero-actions">
+              <a class="button primary" href="#workspace">開始整理文字 <span aria-hidden="true">↘</span></a>
+              <button class="button text-button" id="hero-demo" type="button">試試範例 <span aria-hidden="true">↗</span></button>
+            </div>
+            <p class="hero-note"><span aria-hidden="true">✓</span> 免費使用 <span class="note-divider">/</span> 不儲存文字 <span class="note-divider">/</span> 繁中友善</p>
+          </div>
+          <div class="hero-visual" aria-hidden="true">
+            <div class="visual-label"><span class="tiny-square"></span> A LITTLE FIX GOES A LONG WAY</div>
+            <div class="example-paper">
+              <span class="paper-label">小小修改，大大不同。</span>
+              <p class="paper-sentence"><span class="crossed-word">teh</span> <span class="fixed-word">the</span> best idea.</p>
+              <div class="paper-divider"></div>
+              <div class="paper-bottom"><span class="keyboard-word">su3cl3</span><span class="paper-arrow">→</span><span class="paper-chinese">你好<span class="sparkle">✳</span></span></div>
+              <div class="paper-caption">拼字有解，切錯也有解。</div>
+            </div>
+            <div class="visual-stamp"><span>100%</span><small>在你的瀏覽器</small></div>
+            <span class="visual-decoration">Aa</span>
+          </div>
+        </section>
+
+        <section class="workspace-section page-width" id="workspace" aria-labelledby="workspace-title">
+          <div class="section-heading">
+            <div><p class="eyebrow muted">THE WORKSPACE</p><h2 id="workspace-title">給文字，一點整理。</h2></div>
+            <span class="workspace-caption">原文保留 · 修正由你決定</span>
+          </div>
+          <div class="workspace">
+            <div class="workspace-toolbar">
+              <div class="mode-switch" role="group" aria-label="校正模式">
+                <button type="button" data-mode="auto" aria-pressed="true">自動判斷</button>
+                <button type="button" data-mode="english" aria-pressed="false">英文校正</button>
+                <button type="button" data-mode="zhuyin" aria-pressed="false">注音還原</button>
+              </div>
+              <label class="spacing-option"><input type="checkbox" id="spacing" />中英間距</label>
+            </div>
+            <div class="editors">
+              <div class="editor-pane input-pane">
+                <div class="pane-heading"><label for="source"><span class="pane-number">01</span>原文</label><button type="button" class="quiet-button" id="clear" disabled>清空</button></div>
+                <textarea id="source" maxlength="10000" rows="10" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" aria-describedby="input-help" placeholder="貼上或輸入你的文字…&#10;&#10;例如：i has teh best idea.&#10;或是切錯輸入法的：su3cl3"></textarea>
+                <div class="editor-bottom"><span id="input-help">標準注音鍵盤 · 最多 10,000 字元</span><span id="character-count">0 / 10,000</span></div>
+              </div>
+              <div class="editor-pane output-pane">
+                <div class="pane-heading"><h3><span class="pane-number">02</span>修正結果<span id="applied-count" class="applied-count">尚未修改</span></h3><button type="button" class="copy-button" id="copy" disabled><span aria-hidden="true">⧉</span>複製結果</button></div>
+                <div class="output-body">
+                  <div id="output-empty" class="output-empty"><span class="empty-symbol" aria-hidden="true">Aa<span>✓</span></span><p>讓想說的話，更清楚一點。</p><small>輸入文字，選擇建議，這裡會顯示修正結果。</small></div>
+                  <pre id="result" tabindex="0" aria-label="已套用修正的文字" hidden></pre>
+                </div>
+                <div class="editor-bottom"><span><span class="change-key"></span>已套用的修改</span><button type="button" id="undo" class="quiet-button" disabled>↶ 復原</button></div>
+              </div>
+            </div>
+            <div class="example-bar"><span>沒靈感？試試</span><button type="button" data-example="english">英文錯字 <span aria-hidden="true">↗</span></button><button type="button" data-example="zhuyin">切錯輸入法 <span aria-hidden="true">↗</span></button><button type="button" data-example="mixed">中英混合 <span aria-hidden="true">↗</span></button></div>
+          </div>
+          <div class="suggestions-section">
+            <div class="suggestions-heading"><div><h3>校正建議 <span id="suggestion-count">0</span></h3><p id="analysis-status" role="status" aria-live="polite">開始輸入，找出可以整理的地方。</p></div><div class="review-actions"><button type="button" id="recheck" class="quiet-button" disabled>重新檢查</button><button type="button" id="apply-high" class="button small-button" disabled>套用高信心建議</button></div></div>
+            <div id="suggestions" class="suggestion-grid" aria-label="校正建議清單"></div>
+            <div id="suggestions-empty" class="suggestions-empty"><span aria-hidden="true">✳</span><p>不急著改變每個字，只修需要修的地方。</p></div>
+          </div>
+        </section>
+
+        <section class="about-section page-width" id="about" aria-labelledby="about-title">
+          <div class="about-heading"><p class="eyebrow muted">SMALL TOOL. THOUGHTFUL DETAILS.</p><h2 id="about-title">輕一點，也安心一點。</h2></div>
+          <div class="feature-grid">
+            <article><span class="feature-icon" aria-hidden="true">Aa</span><h3>修正，不擅自改寫</h3><p>常見英文誤拼、基本文法與中文詞組。保留你的語氣，每一項修改都能復原。</p></article>
+            <article><span class="feature-icon keyboard-icon" aria-hidden="true">ㄅ</span><h3>切錯輸入法，也接得住</h3><p>從標準注音鍵盤按鍵找回中文。支援內建常用詞與省略聲調，提供多個候選。</p></article>
+            <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>你的文字，只屬於你</h3><p>校正在本機執行，不上傳、不儲存、不用帳號，也沒有雲端 AI 費用。</p></article>
+          </div>
+          <p class="scope-note">V0.1 · 規則與常用詞庫校正，非完整語意潤稿。注音還原不保證能恢復已選字成另一段中文的內容。</p>
+        </section>
+      </main>
+      <footer class="site-footer page-width"><a class="footer-brand" href="./">grammend.</a><span>A little more clarity. A little more you.</span><span class="footer-version">BUILT FOR YOUR WORDS · V0.1</span></footer>
+      <div id="notification" class="notification" role="status" aria-live="polite" hidden></div>
+    </div>
+    <noscript><p class="noscript-message">文字校正需要 JavaScript，所有校正均在瀏覽器內執行。</p></noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
