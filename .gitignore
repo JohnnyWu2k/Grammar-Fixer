@@ -6,8 +6,12 @@ coverage/
 
 # Firebase local state and logs
 .firebase/
+.firebase-hosting/
 *-debug.log*
 *.log
+
+# Local deployment notes
+/docs/deployment.md
 
 # Local configuration and credentials
 .firebaserc

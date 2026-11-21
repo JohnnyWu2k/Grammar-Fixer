@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "types": ["bun", "vite/client"]
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "scripts"]
 }

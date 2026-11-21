@@ -1,66 +1,134 @@
-name: Validate and deploy Firebase Hosting
+name: Firebase Hosting
+run-name: Firebase Hosting · ${{ github.event_name }} · ${{ github.ref_name }}
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: hosting-${{ github.event_name == 'push' && 'live' || github.event.pull_request.number }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  build_and_deploy:
+  validate:
+    name: Validate and build
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
-      pull-requests: write
+    timeout-minutes: 20
+    concurrency:
+      group: hosting-validate-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    outputs:
+      firebase_cli_version: ${{ steps.firebase-cli.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
-      - uses: oven-sh/setup-bun@v2
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           distribution: temurin
           java-version: "21"
-      - run: bun install --frozen-lockfile
-      - run: bun run check
-      - run: bun run test:rules
-      - run: bun run build
-      - name: Configure Firebase Hosting
-        if: >-
-          (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-          && vars.FIREBASE_PROJECT_ID != '' && vars.FIREBASE_HOSTING_SITE != ''
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck and unit tests
+        run: bun run check
+      - name: Firestore security tests
+        run: bun run test:rules
+      - name: Build website
+        run: bun run build
+      - name: Record locked Firebase CLI version
+        id: firebase-cli
+        run: |
+          printf 'version=%s\n' "$(node -p "require('firebase-tools/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Upload validated website
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hosting-dist-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+  deploy:
+    name: Deploy production
+    needs: validate
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: firebase-hosting-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: ${{ steps.configuration.outputs.url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - name: Check current main commit
+        id: current
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bun scripts/check-main-head.ts
+      - name: Download validated website
+        if: steps.current.outputs.current == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hosting-dist-${{ github.sha }}
+          path: .firebase-hosting/dist
+          digest-mismatch: error
+      - name: Validate deployment settings
+        id: configuration
+        if: steps.current.outputs.current == 'true'
         env:
           FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
           FIREBASE_HOSTING_SITE: ${{ vars.FIREBASE_HOSTING_SITE }}
-        run: |
-          bun -e '
-            const project = process.env.FIREBASE_PROJECT_ID;
-            const site = process.env.FIREBASE_HOSTING_SITE;
-            await Bun.write(".firebaserc", JSON.stringify({
-              projects: { default: project },
-              targets: { [project]: { hosting: { web: [site] } } }
-            }, null, 2));
-          '
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        if: >-
-          (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
-          && vars.FIREBASE_PROJECT_ID != '' && vars.FIREBASE_HOSTING_SITE != ''
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: bun scripts/prepare-hosting.ts
+      - name: Publish to Firebase Hosting
+        id: deploy
+        if: steps.current.outputs.current == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@500ac625ca2dd40cbd15f7659af953801858032a # v0
         with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          channelId: ${{ github.event_name == 'push' && 'live' || '' }}
           projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          channelId: live
           target: web
+          entryPoint: .firebase-hosting
+          firebaseToolsVersion: ${{ needs.validate.outputs.firebase_cli_version }}
+      - name: Verify live website
+        if: steps.deploy.outcome == 'success'
+        env:
+          DEPLOY_URL: ${{ steps.configuration.outputs.url }}
+        run: |
+          curl --fail --silent --show-error --location \
+            --max-time 20 --retry 4 --retry-delay 2 --retry-all-errors \
+            --output /dev/null "$DEPLOY_URL"
+      - name: Deployment summary
+        if: steps.deploy.outcome == 'success'
+        env:
+          DEPLOY_URL: ${{ steps.configuration.outputs.url }}
+        run: |
+          {
+            printf '## Firebase Hosting deployed\n\n'
+            printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Website: %s\n' "$DEPLOY_URL"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -76,8 +76,9 @@ GitHub Actions 設定：
 | Variable | `FIREBASE_HOSTING_SITE` | Hosting 站點 ID |
 | Secret | `FIREBASE_SERVICE_ACCOUNT` | 部署用服務帳戶 JSON |
 
-PR 與 `main` 推送皆執行驗證。設定部署 Variables 後，同儲存庫 PR 建立預覽，
-`main` 推送發布正式站點；fork PR 僅驗證。
+PR 僅驗證；`main` 推送通過型別、單元與 Firestore 規則測試後，自動部署正式 Hosting。
+CI 建置一次，再將同一份 `dist/` artifact 交給部署工作，不重跑建置或發布資料庫規則。
+缺少設定時部署會明確失敗，不會默默略過。
 
 ## 安全
 
