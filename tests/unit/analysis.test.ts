@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { analyze } from "../../src/core/analyze";
 import { applyEdits } from "../../src/core/edits";
 import { oneEditApart, spellingCandidates } from "../../src/core/spelling";
-import { MAX_RESULT_LENGTH, type AnalysisOptions } from "../../src/core/types";
+import { MAX_TEXT_LENGTH, type AnalysisOptions } from "../../src/core/types";
+import { installZhuyinDictionary } from "../../src/core/zhuyin";
+import { mayNeedZhuyinDictionary } from "../../src/core/keyboard-recovery";
+
+installZhuyinDictionary(await Bun.file(
+  new URL("../../src/data/mcbopomofo.generated.txt", import.meta.url),
+).text());
 
 const english: AnalysisOptions = { mode: "english", spacing: false };
 const automatic: AnalysisOptions = { mode: "auto", spacing: false };
@@ -133,9 +139,47 @@ describe("mixed-language analysis", () => {
     expect(item?.original).toBe("su3 cl3");
     expect(item?.replacements[0]).toBe("你好");
   });
-  test("uses manual mode for short toneless sequences", () => {
-    expect(analyze("sucl", automatic).suggestions).toEqual([]);
+  test("recovers short toneless sequences when a strongly supported word exists", () => {
+    expect(analyze("sucl", automatic).suggestions[0]?.replacements[0]).toBe("你好");
     expect(analyze("sucl", zhuyin).suggestions[0]?.replacements[0]).toBe("你好");
+  });
+  test("ranks 抱歉 first and hides disconnected character guesses in automatic mode", () => {
+    const item = analyze("1l4fu04", automatic).suggestions[0];
+    expect(item?.replacements).toEqual(["抱歉"]);
+    expect(item?.confidence).toBe("medium");
+    expect(applyHigh("1l4fu04", automatic)).toBe("1l4fu04");
+  });
+  test("detects lowercase, uppercase and full-width keyboard input", () => {
+    for (const text of ["1l4fu04", "1L4FU04", "１ｌ４ＦＵ０４", "1lfu0"]) {
+      const item = analyze(`👋${text}。`, automatic).suggestions[0];
+      expect([item?.start, item?.end]).toEqual([2, 2 + text.length]);
+      expect(item?.original).toBe(text);
+      expect(item?.replacements[0]).toBe("抱歉");
+    }
+  });
+  test("preserves actual punctuation without losing the comma inside Zhuyin", () => {
+    const suggestions = analyze("vu,4vu,4,1l4fu04;su3cl3.", automatic).suggestions;
+    expect(suggestions.map((item) => item.original)).toEqual(["vu,4vu,4", "1l4fu04", "su3cl3"]);
+    expect(suggestions.map((item) => item.replacements[0])).toEqual(["謝謝", "抱歉", "你好"]);
+  });
+  test("handles long phrases across first-tone spaces", () => {
+    expect(analyze("rup wu0 wu0fu4 cp3cl3", automatic).suggestions[0]?.replacements[0])
+      .toBe("今天天氣很好");
+  });
+  test("leaves numbers, product IDs and English suffixes unchanged", () => {
+    const suggestions = analyze("2026-11-23 XJ-3467 M4 iPhone15 v1.2.3 1234 su3cl3hello", automatic).suggestions;
+    expect(suggestions.map((item) => item.original)).toEqual(["su3cl3"]);
+    expect(suggestions[0]?.replacements[0]).toBe("你好");
+  });
+  test("leaves a single key alone automatically but provides candidates in manual mode", () => {
+    expect(analyze("u", automatic).suggestions).toEqual([]);
+    expect(analyze("u", zhuyin).suggestions[0]?.replacements).toContain("一");
+  });
+  test("uses the smaller bundle when only English analysis or known words are needed", () => {
+    expect(mayNeedZhuyinDictionary("1l4fu04", "english")).toBe(false);
+    expect(mayNeedZhuyinDictionary("hello world, 2026-11-23", "auto")).toBe(false);
+    expect(mayNeedZhuyinDictionary("今天要開會", "auto")).toBe(false);
+    expect(mayNeedZhuyinDictionary("１Ｌ４ＦＵ０４", "auto")).toBe(true);
   });
   test("does not interpret known English words as keyboard errors automatically", () => {
     expect(analyze("go to the office today", automatic).suggestions).toEqual([]);
@@ -159,7 +203,7 @@ describe("analysis bounds", () => {
     expect(() => applyHigh(text)).not.toThrow();
   });
   test("rejects oversized input and invalid modes", () => {
-    expect(() => analyze("a".repeat(MAX_RESULT_LENGTH + 1))).toThrow();
+    expect(() => analyze("a".repeat(MAX_TEXT_LENGTH + 1))).toThrow();
     expect(() => analyze("hello", { mode: "invalid", spacing: false } as unknown as AnalysisOptions)).toThrow();
   });
   test("does not split or misplace UTF-16 offsets after an emoji", () => {

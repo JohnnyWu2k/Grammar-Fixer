@@ -49,8 +49,8 @@ export class AnalyzerClient {
   }
 
   private async fallback(text: string, options: AnalysisOptions): Promise<AnalysisResult> {
-    const { analyze } = await import("../core/analyze");
-    return analyze(text, options);
+    const { analyzeInBrowser } = await import("../core/analyze-in-browser");
+    return analyzeInBrowser(text, options);
   }
 
   dispose(): void {

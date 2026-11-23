@@ -1,12 +1,8 @@
-import { MAX_TEXT_LENGTH, type AnalysisOptions, type Category, type Mode, type Suggestion } from "../core/types";
+import { MAX_TEXT_LENGTH, type AnalysisOptions, type Category, type Edit, type Mode, type Suggestion } from "../core/types";
 import { AnalyzerClient } from "./analyzer-client";
-import { EditorState } from "./state";
+import { createExampleGenerator, type ExampleChoice } from "./examples";
+import { EditorState, type EditorSelection } from "./state";
 
-const EXAMPLES = {
-  english: "i has teh best idea. This is a apple,adn I definately want to share it.\nWe are ready for the the next step.",
-  zhuyin: "su3cl3，rup wu0 wu0fu4 cp3cl3。\nvu,4vu,4su3！",
-  mixed: "這個 featre 很好用，我以經開始使用了。\ni has a idea for the next udpate.\nsu3cl3，我們一起測試看看！",
-};
 const LABELS: Record<Category, string> = {
   spelling: "英文拼字", grammar: "基本文法", chinese: "中文用字",
   zhuyin: "輸入法還原", spacing: "文字間距",
@@ -32,18 +28,20 @@ function visibleText(text: string): string {
 }
 
 export function mountApp(): void {
-  const state = new EditorState();
-  const analyzer = new AnalyzerClient();
   const source = required<HTMLTextAreaElement>("#source");
+  const fit = (text: string) => text.length > MAX_TEXT_LENGTH
+    ? text.slice(0, MAX_TEXT_LENGTH).replace(/[\uD800-\uDBFF]$/, "") : text;
+  source.maxLength = MAX_TEXT_LENGTH;
+  const state = new EditorState(fit(source.value));
+  const analyzer = new AnalyzerClient();
+  const nextExample = createExampleGenerator();
+  const formatCount = new Intl.NumberFormat("en-US");
+  const characterLimit = formatCount.format(MAX_TEXT_LENGTH);
   const spacing = required<HTMLInputElement>("#spacing");
-  const output = required<HTMLPreElement>("#result");
-  const outputEmpty = required("#output-empty");
   const grid = required("#suggestions");
-  const empty = required("#suggestions-empty");
   const status = required("#analysis-status");
   const count = required("#suggestion-count");
   const charCount = required("#character-count");
-  const appliedCount = required("#applied-count");
   const clear = required<HTMLButtonElement>("#clear");
   const copy = required<HTMLButtonElement>("#copy");
   const undo = required<HTMLButtonElement>("#undo");
@@ -57,6 +55,10 @@ export function mountApp(): void {
   let pending = false;
   let revision = 0;
   let composing = false;
+  let compositionSelection: EditorSelection | undefined;
+  let selectionBeforeInput: EditorSelection | undefined;
+  let typing: { kind: string; time: number; after: EditorSelection } | undefined;
+  let sample: { prefix: string; text: string } | undefined;
   let analysisTimer: ReturnType<typeof setTimeout> | undefined;
   let notificationTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -67,28 +69,32 @@ export function mountApp(): void {
     notificationTimer = setTimeout(() => { notification.hidden = true; }, 3500);
   }
 
-  function renderOutput(): void {
-    const text = state.text;
-    output.hidden = !text;
-    outputEmpty.hidden = Boolean(text);
-    output.replaceChildren();
-    const ranges = [...state.changes].sort((a, b) => a.start - b.start);
-    let cursor = 0;
-    for (const range of ranges) {
-      const start = Math.max(cursor, range.start);
-      const end = Math.min(text.length, range.end);
-      if (end <= start) continue;
-      output.append(document.createTextNode(text.slice(cursor, start)));
-      output.append(element("mark", "", text.slice(start, end)));
-      cursor = end;
+  function readSelection(): EditorSelection {
+    return { start: source.selectionStart, end: source.selectionEnd, direction: source.selectionDirection };
+  }
+
+  function updateEditor(selection?: EditorSelection, reveal = true): void {
+    const { scrollTop, scrollLeft } = source;
+    if (source.value !== state.text) source.value = state.text;
+    if (selection) {
+      source.focus({ preventScroll: true });
+      source.setSelectionRange(selection.start, selection.end, selection.direction);
     }
-    output.append(document.createTextNode(text.slice(cursor)));
-    appliedCount.textContent = state.appliedCount ? `已套用 ${state.appliedCount} 處` : "尚未修改";
-    charCount.textContent = `${state.source.length.toLocaleString()} / 10,000`;
-    copy.disabled = !text || composing;
-    clear.disabled = !state.source;
+    source.scrollTop = scrollTop;
+    source.scrollLeft = scrollLeft;
+    if (selection && reveal) {
+      const { top, bottom } = source.getBoundingClientRect();
+      if (bottom <= 0 || top >= window.innerHeight) source.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  function renderEditorControls(): void {
+    const length = source.value.length;
+    charCount.textContent = `${formatCount.format(length)} / ${characterLimit}`;
+    copy.disabled = !length || composing;
+    clear.disabled = !length || composing;
     undo.disabled = !state.canUndo || composing;
-    recheck.disabled = !text || composing;
+    recheck.disabled = !length || composing;
   }
 
   function toEdit(suggestion: Suggestion) {
@@ -98,15 +104,17 @@ export function mountApp(): void {
     };
   }
 
-  function apply(suggestion: Suggestion): void {
+  function apply(edits: Edit[]): void {
     if (pending || composing) return;
     try {
-      state.apply([toEdit(suggestion)]);
-      notify("已套用修正，原文保持不變。");
+      const selection = state.apply(edits, readSelection());
+      if (!selection) return;
+      typing = undefined;
+      updateEditor(selection);
+      notify(`已套用 ${edits.length} 項修正。`);
       refresh(0);
-      output.focus({ preventScroll: true });
-    } catch {
-      notify("文字已更新，正在重新檢查。");
+    } catch (error) {
+      notify(error instanceof RangeError ? "修正後會超過字元上限。" : "文字已更新，正在重新檢查。");
       refresh(0);
     }
   }
@@ -159,44 +167,30 @@ export function mountApp(): void {
     const accept = element("button", "suggestion-apply", "套用");
     accept.type = "button";
     accept.setAttribute("aria-label", `套用「${suggestion.original || "中英間距"}」的修正`);
-    accept.addEventListener("click", () => apply(suggestion));
+    accept.addEventListener("click", () => apply([toEdit(suggestion)]));
     actions.append(ignore, accept);
     card.append(actions);
     return card;
   }
 
   function renderSuggestions(): void {
-    grid.setAttribute("aria-busy", String(pending || composing));
+    const busy = pending || composing;
+    grid.setAttribute("aria-busy", String(busy));
+    grid.inert = busy;
+    if (busy) {
+      applyHigh.disabled = true;
+      status.textContent = composing ? "輸入法組字中" : "檢查中…";
+      return;
+    }
     const visible = state.visible(suggestions);
     const high = visible.filter((suggestion) => suggestion.confidence === "high");
     count.textContent = String(visible.length);
-    applyHigh.disabled = pending || composing || !high.length;
+    applyHigh.disabled = !high.length;
     applyHigh.textContent = high.length ? `套用高信心建議 (${high.length})` : "套用高信心建議";
-    grid.replaceChildren();
-    if (!pending && !composing) grid.append(...visible.map(suggestionCard));
-    empty.hidden = Boolean(visible.length) && !pending && !composing;
-    const emptyMessage = empty.querySelector("p");
-    if (composing) {
-      status.textContent = "輸入中，組字完成後再檢查。";
-      if (emptyMessage) emptyMessage.textContent = "正在等待輸入完成。";
-    } else if (pending) {
-      status.textContent = "正在本機檢查…";
-      if (emptyMessage) emptyMessage.textContent = "整理你的文字中…";
-    } else if (!state.text.trim()) {
-      status.textContent = "開始輸入，找出可以整理的地方。";
-      if (emptyMessage) emptyMessage.textContent = "不急著改變每個字，只修需要修的地方。";
-    } else if (visible.length) {
-      status.textContent = limited
-        ? "先顯示前 80 項建議，套用後可繼續檢查。"
-        : `${visible.length} 項建議。候選由你確認，高信心建議可批次套用。`;
-    } else {
-      status.textContent = limited ? "這批建議已處理完畢。" : "本次檢查完成。";
-      if (emptyMessage) emptyMessage.textContent = limited
-        ? "原文仍有其他候選，可分段檢查。"
-        : options.mode === "zhuyin"
-          ? "沒有找到詞庫內的注音候選，原文保持不變。"
-          : "目前沒有其他建議。規則校正不代表完整的文法驗證。";
-    }
+    grid.replaceChildren(...visible.map(suggestionCard));
+    status.textContent = !state.text.trim() ? "等待輸入"
+      : limited ? "建議過多，顯示前 80 項"
+        : visible.length ? "選擇要套用的建議" : "目前沒有建議";
   }
 
   function refresh(delay = 240): void {
@@ -206,7 +200,7 @@ export function mountApp(): void {
     selections.clear();
     limited = false;
     pending = Boolean(state.text.trim()) && !composing;
-    renderOutput();
+    renderEditorControls();
     renderSuggestions();
     if (!pending) return;
     analysisTimer = setTimeout(() => {
@@ -225,44 +219,102 @@ export function mountApp(): void {
     }, delay);
   }
 
-  function inputChanged(): void {
-    let value = source.value;
-    if (value.length > MAX_TEXT_LENGTH) {
-      value = value.slice(0, MAX_TEXT_LENGTH).replace(/[\uD800-\uDBFF]$/, "");
+  function inputChanged(kind = "", before = selectionBeforeInput): void {
+    selectionBeforeInput = undefined;
+    const value = fit(source.value);
+    if (value !== source.value) {
       source.value = value;
-      notify("已保留前 10,000 字元。");
+      notify("已保留字元上限以內的內容。");
     }
-    state.setSource(value);
+    const time = performance.now();
+    const joinsTyping = /^(insertText|deleteContentBackward|deleteContentForward)$/.test(kind);
+    const merge = Boolean(joinsTyping && before && typing && typing.kind === kind && time - typing.time < 800
+      && before.start === before.end && before.start === typing.after.start && before.end === typing.after.end);
+    if (!state.edit(value, before, merge)) return;
+    typing = joinsTyping ? { kind, time, after: readSelection() } : undefined;
     refresh();
   }
 
-  function loadExample(key: keyof typeof EXAMPLES): void {
+  function loadExample(choice: ExampleChoice): void {
     if (composing) return;
-    source.value = EXAMPLES[key];
-    if (key === "english") setMode("english");
-    else setMode("auto");
-    inputChanged();
-    source.focus({ preventScroll: true });
-    document.querySelector("#workspace")?.scrollIntoView({ block: "start" });
+    const example = nextExample(choice);
+    const previousSample = sample && state.text === sample.prefix + sample.text ? sample : undefined;
+    const prefix = previousSample?.prefix
+      ?? (state.text ? state.text + (state.text.endsWith("\n") ? "\n" : "\n\n") : "");
+    const text = prefix + example.text;
+    if (text.length > MAX_TEXT_LENGTH) {
+      notify("空間不足，未加入範例。");
+      return;
+    }
+    typing = undefined;
+    state.edit(text, readSelection());
+    sample = { prefix, text: example.text };
+    setMode(prefix ? "auto" : example.mode);
+    const end = text.length;
+    updateEditor({ start: end, end }, choice !== "random");
+    source.scrollTop = source.scrollHeight;
+    refresh(0);
+    if (prefix && !previousSample) notify("範例已附加在文末。");
+    if (choice === "random") {
+      document.querySelector("#workspace")?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+    }
+  }
+
+  function restore(direction: "undo" | "redo"): void {
+    if (composing) return;
+    const selection = state[direction](readSelection());
+    if (!selection) return;
+    typing = undefined;
+    updateEditor(selection);
+    refresh(0);
+    notify(direction === "undo" ? "已復原上一步。" : "已重做上一步。");
   }
 
   function setMode(mode: Mode): void {
+    if (options.mode !== mode) state.resetIgnored();
     options.mode = mode;
     spacing.disabled = mode === "zhuyin";
     for (const button of document.querySelectorAll<HTMLButtonElement>("[data-mode]")) {
       button.setAttribute("aria-pressed", String(button.dataset.mode === mode));
     }
-    state.resetIgnored();
   }
 
-  source.addEventListener("input", inputChanged);
+  source.addEventListener("beforeinput", (event) => {
+    if (composing || event.isComposing) return;
+    if (event.cancelable && (event.inputType === "historyUndo" || event.inputType === "historyRedo")) {
+      event.preventDefault();
+      restore(event.inputType === "historyUndo" ? "undo" : "redo");
+      return;
+    }
+    selectionBeforeInput = readSelection();
+  });
+  source.addEventListener("keydown", (event) => {
+    if (composing || event.isComposing || event.altKey || (!event.ctrlKey && !event.metaKey)) return;
+    const key = event.key.toLowerCase();
+    if (key !== "z" && key !== "y") return;
+    event.preventDefault();
+    restore(key === "y" || event.shiftKey ? "redo" : "undo");
+  });
+  source.addEventListener("input", (event) => {
+    const edit = event as InputEvent;
+    if (composing || edit.isComposing) renderEditorControls();
+    else inputChanged(edit.inputType);
+  });
   source.addEventListener("compositionstart", () => {
+    compositionSelection = readSelection();
+    typing = undefined;
     composing = true;
     refresh();
   });
   source.addEventListener("compositionend", () => {
     composing = false;
-    inputChanged();
+    const before = compositionSelection;
+    compositionSelection = undefined;
+    if (source.value === state.text) refresh();
+    else inputChanged("", before);
   });
   spacing.addEventListener("change", () => {
     options.spacing = spacing.checked;
@@ -280,23 +332,17 @@ export function mountApp(): void {
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-example]")) {
     button.addEventListener("click", () => {
       const key = button.dataset.example;
-      if (key && key in EXAMPLES) loadExample(key as keyof typeof EXAMPLES);
+      if (key === "random" || key === "english" || key === "zhuyin" || key === "mixed") loadExample(key);
     });
   }
-  required("#hero-demo").addEventListener("click", () => loadExample("mixed"));
   clear.addEventListener("click", () => {
     if (composing) return;
-    source.value = "";
-    inputChanged();
-    source.focus({ preventScroll: true });
-  });
-  undo.addEventListener("click", () => {
-    if (composing) return;
-    state.undo();
-    notify("已復原上一批修改。");
+    typing = undefined;
+    state.edit("", readSelection());
+    updateEditor({ start: 0, end: 0 });
     refresh(0);
-    output.focus({ preventScroll: true });
   });
+  undo.addEventListener("click", () => restore("undo"));
   recheck.addEventListener("click", () => {
     state.resetIgnored();
     refresh(0);
@@ -304,35 +350,24 @@ export function mountApp(): void {
   applyHigh.addEventListener("click", () => {
     if (pending || composing) return;
     const high = state.visible(suggestions).filter((suggestion) => suggestion.confidence === "high");
-    try {
-      state.apply(high.map(toEdit));
-      notify(`已套用 ${high.length} 項高信心建議。`);
-      refresh(0);
-      output.focus({ preventScroll: true });
-    } catch {
-      notify("文字已更新，正在重新檢查。");
-      refresh(0);
-    }
+    apply(high.map(toEdit));
   });
   copy.addEventListener("click", () => {
     if (!state.text || composing) return;
     void (async () => {
       try {
         await navigator.clipboard.writeText(state.text);
-        notify("已複製修正結果。");
+        notify("已複製文字。");
       } catch {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(output);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-        output.focus();
-        notify("已選取結果，可按 Ctrl+C 或使用系統選單複製。");
+        source.focus({ preventScroll: true });
+        source.select();
+        notify("已選取文字，可使用系統複製。");
       }
     })();
   });
   // Respect browser-restored drafts without persisting any text ourselves.
-  inputChanged();
+  updateEditor();
+  refresh();
   window.addEventListener("pagehide", () => {
     clearTimeout(analysisTimer);
     clearTimeout(notificationTimer);

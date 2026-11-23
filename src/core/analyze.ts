@@ -1,10 +1,10 @@
 import { CHINESE_TYPOS } from "../data/chinese";
+import { recoverKeyboard } from "./keyboard-recovery";
 import { isProtected, overlaps, protectedRanges } from "./protected";
 import { isKnownWord, matchCase, spellingCandidates } from "./spelling";
-import { decodeZhuyin, toPhonetic } from "./zhuyin";
 import {
-  MAX_SUGGESTIONS, MAX_RESULT_LENGTH,
-  type AnalysisOptions, type AnalysisResult, type Suggestion, type TextRange,
+  MAX_SUGGESTIONS, MAX_TEXT_LENGTH,
+  type AnalysisOptions, type AnalysisResult, type Suggestion,
 } from "./types";
 
 type Draft = Omit<Suggestion, "id" | "original">;
@@ -27,58 +27,10 @@ function takesAn(word: string): boolean | undefined {
   return silentH.test(word) || (!consonantVowels.test(word) && /^[aeiou]/i.test(word));
 }
 
-function recoverKeyboard(
-  text: string, mode: AnalysisOptions["mode"], protectedText: TextRange[],
-): Draft[] {
-  const tokens = Array.from(text.matchAll(/[A-Za-z0-9,;./-]+/g));
-  const suggestions: Draft[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const first = tokens[i];
-    if (!first || isProtected({ start: first.index, end: first.index + first[0].length }, protectedText)) continue;
-    let best: { draft: Draft; last: number } | undefined;
-    for (let j = i; j < Math.min(i + 6, tokens.length); j++) {
-      const token = tokens[j];
-      if (!token) break;
-      const previous = tokens[j - 1];
-      if (j > i && previous
-        && !/^[ \t]+$/.test(text.slice(previous.index + previous[0].length, token.index))) break;
-      if (isProtected({ start: token.index, end: token.index + token[0].length }, protectedText)) break;
-      if (mode === "auto" && (isKnownWord(token[0]) || /[A-Z]/.test(token[0]))) break;
-      let end = token.index + token[0].length;
-      let raw = text.slice(first.index, end);
-      let candidates = decodeZhuyin(raw);
-      if (!candidates.length && /[.,;]$/.test(raw)) {
-        end--;
-        raw = text.slice(first.index, end);
-        candidates = decodeZhuyin(raw);
-      }
-      const leading = candidates[0];
-      if (!leading) continue;
-      if (mode === "auto" && !/[3467]/.test(raw)
-        && (raw.replace(/\s/g, "").length < 6 || leading.syllables < 2)) continue;
-      best = {
-        last: j,
-        draft: {
-          start: first.index, end,
-          replacements: candidates.map((candidate) => candidate.text),
-          category: "zhuyin", confidence: "medium",
-          message: `標準注音鍵盤：${toPhonetic(raw)}`,
-        },
-      };
-    }
-    if (best) {
-      suggestions.push(best.draft);
-      i = best.last;
-    }
-    if (suggestions.length >= MAX_SUGGESTIONS + 1) break;
-  }
-  return suggestions;
-}
-
 export function analyze(
   text: string, options: AnalysisOptions = { mode: "auto", spacing: false },
 ): AnalysisResult {
-  if (text.length > MAX_RESULT_LENGTH) throw new Error("Text exceeds the analysis limit.");
+  if (text.length > MAX_TEXT_LENGTH) throw new Error("Text exceeds the analysis limit.");
   if (!["auto", "english", "zhuyin"].includes(options.mode)) throw new Error("Unknown analysis mode.");
   const protectedText = protectedRanges(text);
   const drafts: Draft[] = [];

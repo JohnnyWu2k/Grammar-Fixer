@@ -1,6 +1,4 @@
-export const MAX_TEXT_LENGTH = 10_000;
-// Applied spacing and replacements can grow a draft beyond its input length.
-export const MAX_RESULT_LENGTH = 20_000;
+export const MAX_TEXT_LENGTH = 20_000;
 export const MAX_SUGGESTIONS = 80;
 
 export type Mode = "auto" | "english" | "zhuyin";

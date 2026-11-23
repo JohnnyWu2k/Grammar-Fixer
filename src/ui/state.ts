@@ -1,33 +1,95 @@
 import { applyEdits } from "../core/edits";
 import { overlaps } from "../core/protected";
-import { MAX_TEXT_LENGTH, MAX_RESULT_LENGTH, type Edit, type Suggestion, type TextRange } from "../core/types";
+import { MAX_TEXT_LENGTH, type Edit, type Suggestion, type TextRange } from "../core/types";
 
 type Ignored = Pick<Suggestion, "start" | "end" | "original" | "category">;
+
+export interface EditorSelection extends TextRange {
+  direction?: "forward" | "backward" | "none";
+}
+
 interface Snapshot {
   text: string;
+  selection: EditorSelection;
   ignored: Ignored[];
-  appliedCount: number;
-  changes: TextRange[];
+}
+
+const HISTORY_LIMIT = 50;
+
+function checkLength(text: string): void {
+  if (text.length > MAX_TEXT_LENGTH) throw new RangeError("Text is too long.");
+}
+
+function atEnd(text: string): EditorSelection {
+  return { start: text.length, end: text.length };
+}
+
+function getChange(before: string, after: string): Edit {
+  let start = 0;
+  while (start < Math.min(before.length, after.length) && before[start] === after[start]) start++;
+  let end = before.length;
+  let nextEnd = after.length;
+  while (end > start && nextEnd > start && before[end - 1] === after[nextEnd - 1]) {
+    end--;
+    nextEnd--;
+  }
+  return { start, end, original: before.slice(start, end), replacement: after.slice(start, nextEnd) };
+}
+
+function mapOffset(offset: number, edits: readonly Edit[], bias: "start" | "end"): number {
+  let shift = 0;
+  for (const edit of edits) {
+    if (offset < edit.start || (offset === edit.start && bias === "start")) break;
+    if (offset < edit.end) {
+      return edit.start + shift + (bias === "end" ? edit.replacement.length : 0);
+    }
+    shift += edit.replacement.length - (edit.end - edit.start);
+  }
+  return offset + shift;
 }
 
 export class EditorState {
-  source = "";
-  text = "";
-  appliedCount = 0;
-  changes: TextRange[] = [];
+  text: string;
   private ignored: Ignored[] = [];
   private history: Snapshot[] = [];
+  private future: Snapshot[] = [];
+
+  constructor(text = "") {
+    checkLength(text);
+    this.text = text;
+  }
 
   get canUndo(): boolean { return this.history.length > 0; }
+  get canRedo(): boolean { return this.future.length > 0; }
 
-  setSource(text: string): void {
-    if (text.length > MAX_TEXT_LENGTH) throw new Error("Text is too long.");
-    this.source = text;
+  private snapshot(selection: EditorSelection): Snapshot {
+    return { text: this.text, selection: { ...selection }, ignored: [...this.ignored] };
+  }
+
+  private record(selection: EditorSelection, merge = false): void {
+    if (!merge || !this.history.length || this.future.length) {
+      this.history.push(this.snapshot(selection));
+      if (this.history.length > HISTORY_LIMIT) this.history.shift();
+    }
+    this.future = [];
+  }
+
+  private moveIgnored(edits: readonly Edit[]): void {
+    this.ignored = this.ignored.filter((ignored) => !edits.some((edit) => overlaps(ignored, edit)))
+      .map((ignored) => {
+        const shift = edits.filter((edit) => edit.end <= ignored.start)
+          .reduce((total, edit) => total + edit.replacement.length - (edit.end - edit.start), 0);
+        return { ...ignored, start: ignored.start + shift, end: ignored.end + shift };
+      });
+  }
+
+  edit(text: string, selection = atEnd(this.text), merge = false): boolean {
+    checkLength(text);
+    if (text === this.text) return false;
+    this.record(selection, merge);
+    if (this.ignored.length) this.moveIgnored([getChange(this.text, text)]);
     this.text = text;
-    this.appliedCount = 0;
-    this.ignored = [];
-    this.history = [];
-    this.changes = [];
+    return true;
   }
 
   visible(suggestions: Suggestion[]): Suggestion[] {
@@ -45,48 +107,39 @@ export class EditorState {
 
   resetIgnored(): void { this.ignored = []; }
 
-  apply(edits: Edit[]): void {
+  apply(edits: readonly Edit[], selection = atEnd(this.text)): EditorSelection | undefined {
     if (!edits.length) return;
     const next = applyEdits(this.text, edits);
-    if (next.length > MAX_RESULT_LENGTH) throw new Error("Result is too long.");
+    checkLength(next);
     if (next === this.text) return;
-    this.history.push({
-      text: this.text,
-      ignored: this.ignored.map((ignored) => ({ ...ignored })),
-      appliedCount: this.appliedCount,
-      changes: this.changes.map((change) => ({ ...change })),
-    });
-    if (this.history.length > 50) this.history.shift();
-    const shiftBefore = (position: number) => edits.filter((edit) => edit.end <= position)
-      .reduce((total, edit) => total + edit.replacement.length - (edit.end - edit.start), 0);
-    this.changes = this.changes.filter((change) => !edits.some((edit) => overlaps(change, edit)))
-      .map((change) => ({
-        start: change.start + shiftBefore(change.start),
-        end: change.end + shiftBefore(change.end),
-      }));
-    let delta = 0;
-    for (const edit of [...edits].sort((a, b) => a.start - b.start || a.end - b.end)) {
-      if (edit.replacement) this.changes.push({
-        start: edit.start + delta, end: edit.start + delta + edit.replacement.length,
-      });
-      delta += edit.replacement.length - (edit.end - edit.start);
-    }
-    this.ignored = this.ignored.filter((ignored) => !edits.some((edit) => overlaps(ignored, edit)))
-      .map((ignored) => {
-        const shift = edits.filter((edit) => edit.end <= ignored.start)
-          .reduce((total, edit) => total + edit.replacement.length - (edit.end - edit.start), 0);
-        return { ...ignored, start: ignored.start + shift, end: ignored.end + shift };
-      });
+    this.record(selection);
+    this.moveIgnored(edits);
     this.text = next;
-    this.appliedCount += edits.length;
+    const sorted = [...edits].sort((a, b) => a.start - b.start || a.end - b.end);
+    return {
+      start: mapOffset(selection.start, sorted, selection.start === selection.end ? "end" : "start"),
+      end: mapOffset(selection.end, sorted, "end"),
+      direction: selection.direction,
+    };
   }
 
-  undo(): void {
+  private restore(snapshot: Snapshot): EditorSelection {
+    this.text = snapshot.text;
+    this.ignored = snapshot.ignored;
+    return snapshot.selection;
+  }
+
+  undo(selection = atEnd(this.text)): EditorSelection | undefined {
     const previous = this.history.pop();
     if (!previous) return;
-    this.text = previous.text;
-    this.ignored = previous.ignored;
-    this.appliedCount = previous.appliedCount;
-    this.changes = previous.changes;
+    this.future.push(this.snapshot(selection));
+    return this.restore(previous);
+  }
+
+  redo(selection = atEnd(this.text)): EditorSelection | undefined {
+    const next = this.future.pop();
+    if (!next) return;
+    this.history.push(this.snapshot(selection));
+    return this.restore(next);
   }
 }
