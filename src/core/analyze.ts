@@ -1,7 +1,8 @@
-import { CHINESE_TYPOS } from "../data/chinese";
+import { findChineseCorrections } from "./chinese";
 import { recoverKeyboard } from "./keyboard-recovery";
 import { isProtected, overlaps, protectedRanges } from "./protected";
 import { isKnownWord, matchCase, spellingCandidates } from "./spelling";
+import { compareSuggestionPriority } from "./suggestion-priority";
 import {
   MAX_SUGGESTIONS, MAX_TEXT_LENGTH,
   type AnalysisOptions, type AnalysisResult, type Suggestion,
@@ -39,6 +40,7 @@ export function analyze(
   };
   if (options.mode !== "english") {
     drafts.push(...recoverKeyboard(text, options.mode, protectedText));
+    for (const correction of findChineseCorrections(text, protectedText)) add(correction);
   }
   if (options.mode !== "zhuyin") {
     const spellingCache = new Map<string, ReturnType<typeof spellingCandidates>>();
@@ -107,18 +109,6 @@ export function analyze(
       });
     }
 
-    if (options.mode === "auto") {
-      for (const [original, replacement] of CHINESE_TYPOS) {
-        let start = text.indexOf(original);
-        while (start !== -1 && drafts.length < 500) {
-          add({
-            start, end: start + original.length, replacements: [replacement],
-            category: "chinese", confidence: "medium", message: "常見中文詞組用字建議。",
-          });
-          start = text.indexOf(original, start + original.length);
-        }
-      }
-    }
     if (options.spacing) {
       for (const match of text.matchAll(/(?<=\p{Script=Han})(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])(?=\p{Script=Han})/gu)) {
         add({
@@ -130,10 +120,7 @@ export function analyze(
   }
 
   // Keyboard recovery wins over English rules; longer overlapping fixes win.
-  const priority = (draft: Draft) =>
-    draft.category === "zhuyin" ? 3 : draft.confidence === "high" ? 2 : 1;
-  drafts.sort((a, b) => priority(b) - priority(a)
-    || (b.end - b.start) - (a.end - a.start) || a.start - b.start);
+  drafts.sort(compareSuggestionPriority);
   const resolved: Draft[] = [];
   for (const draft of drafts) {
     if (!resolved.some((item) => overlaps(item, draft)

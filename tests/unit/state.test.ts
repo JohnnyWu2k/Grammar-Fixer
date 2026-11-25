@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { analyze } from "../../src/core/analyze";
 import { applyEdits } from "../../src/core/edits";
+import { preferredSuggestion } from "../../src/core/suggestion-priority";
 import { MAX_TEXT_LENGTH, type Edit, type Suggestion } from "../../src/core/types";
 import { EditorState } from "../../src/ui/state";
 
@@ -39,6 +40,30 @@ describe("safe edit application", () => {
 });
 
 describe("single editor state", () => {
+  test("applies only the highest-priority suggestion and reranks the remaining edits", () => {
+    const text = "teh adress，u4t.6ai4503";
+    const state = new EditorState(text);
+    const { suggestions } = analyze(text);
+    expect(suggestions.map((item) => item.original)).toEqual(["teh", "adress", "u4t.6ai4503"]);
+    const preferred = preferredSuggestion(state.visible(suggestions))!;
+    expect(preferred).toMatchObject({ confidence: "medium", replacements: ["一籌莫展"] });
+    state.apply([edit(preferred)]);
+    expect(state.text).toBe("teh adress，一籌莫展");
+    expect(preferredSuggestion(state.visible(analyze(state.text).suggestions))?.original).toBe("adress");
+    state.undo();
+    expect(state.text).toBe(text);
+  });
+  test("prefers the rule's first candidate and skips ignored suggestions", () => {
+    const state = new EditorState("su3cl3，請仔細的檢查。");
+    const { suggestions } = analyze(state.text);
+    const preferred = preferredSuggestion(state.visible(suggestions))!;
+    expect(preferred.replacements.slice(0, 2)).toEqual(["你好", "妳好"]);
+    state.ignore(preferred);
+    const next = preferredSuggestion(state.visible(suggestions))!;
+    expect(next).toMatchObject({ confidence: "medium", replacements: ["地"] });
+    state.ignore(next);
+    expect(preferredSuggestion(state.visible(suggestions))).toBeUndefined();
+  });
   test("applies a correction in place and preserves it on later input", () => {
     const state = new EditorState("teh idea");
     const caret = state.apply([edit(first(state.text))], { start: 8, end: 8 });

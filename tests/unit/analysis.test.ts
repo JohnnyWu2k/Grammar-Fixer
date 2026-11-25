@@ -149,6 +149,26 @@ describe("mixed-language analysis", () => {
     expect(item?.confidence).toBe("medium");
     expect(applyHigh("1l4fu04", automatic)).toBe("1l4fu04");
   });
+  test.each(["u4t.6ai4503", "ut.6ai4503", "u4 t.6 ai4 503"])(
+    "recognizes the complete idiom from %s before proposing a replacement", (keys) => {
+      const text = `他現在${keys}。`;
+      const result = analyze(text, automatic).suggestions;
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ original: keys, replacements: ["一籌莫展"], confidence: "medium" });
+      expect(analyze(text, zhuyin).suggestions[0]?.replacements[0]).toBe("一籌莫展");
+      expect(applyHigh(text, automatic)).toBe(text);
+      expect(applyEdits(text, [{ ...result[0]!, replacement: "一籌莫展" }])).toBe("他現在一籌莫展。");
+    },
+  );
+  test("finds the idiom within a longer phonetic reading", () => {
+    expect(analyze("ji3u4t.6ai4503", automatic).suggestions[0]?.replacements[0]).toBe("我一籌莫展");
+  });
+  test("leaves a separate number alone if it does not complete a longer word", () => {
+    const result = analyze("1l4fu04 503", automatic).suggestions;
+    expect(result.map(({ original, replacements }) => [original, replacements])).toEqual([
+      ["1l4fu04", ["抱歉"]],
+    ]);
+  });
   test("detects lowercase, uppercase and full-width keyboard input", () => {
     for (const text of ["1l4fu04", "1L4FU04", "１ｌ４ＦＵ０４", "1lfu0"]) {
       const item = analyze(`👋${text}。`, automatic).suggestions[0];

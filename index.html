@@ -73,9 +73,14 @@
                 <button type="button" class="quiet-button" id="clear" disabled>清空</button>
                 <button type="button" class="quiet-button" id="undo" aria-label="復原上一步" disabled><span aria-hidden="true">↶ </span>復原</button>
                 <button type="button" class="copy-button" id="copy" disabled><span aria-hidden="true">⧉</span>複製</button>
+                <button type="button" class="button primary preferred-apply" id="apply-preferred" aria-label="套用最優先的建議" title="套用最優先的建議" disabled>套用</button>
               </div>
             </div>
-            <textarea id="source" maxlength="20000" rows="8" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" placeholder="貼上或輸入文字…"></textarea>
+            <div class="editor-surface">
+              <div id="editor-highlights" class="editor-highlights" aria-hidden="true"><div class="editor-text"></div></div>
+              <textarea id="source" class="editor-text" maxlength="20000" rows="8" spellcheck="false" autocorrect="off" autocapitalize="off" autocomplete="off" placeholder="貼上或輸入文字…"></textarea>
+              <div class="editor-annotations"><div id="inline-fixes" role="group" aria-label="編輯框內的校正建議"></div></div>
+            </div>
             <div class="editor-footer">
               <div class="example-bar" role="group" aria-label="範例類型">
                 <button type="button" data-example="english">英文範例</button>
@@ -86,21 +91,25 @@
             </div>
           </div>
           <div class="suggestions-section">
-            <div class="suggestions-heading"><div><h3>校正建議 <span id="suggestion-count">0</span></h3><p id="analysis-status" role="status">等待輸入</p></div><div class="review-actions"><button type="button" id="recheck" class="quiet-button" disabled>重新檢查</button><button type="button" id="apply-high" class="button small-button" disabled>套用高信心建議</button></div></div>
-            <div id="suggestions" class="suggestion-grid" aria-label="校正建議清單"></div>
+            <div class="suggestions-heading"><div><h3>校正建議 <span id="suggestion-count">0</span></h3><p id="analysis-status" role="status">等待輸入</p></div><div class="review-actions"><span class="confidence-legend" data-confidence="high">高信心</span><span class="confidence-legend" data-confidence="medium">待確認</span><button type="button" id="recheck" class="quiet-button" disabled>重新檢查</button></div></div>
+            <details id="suggestion-details" class="suggestion-details" hidden>
+              <summary>查看全部建議</summary>
+              <div id="suggestions" class="suggestion-grid" aria-label="校正建議清單"></div>
+            </details>
           </div>
         </section>
 
         <section class="about-section page-width" id="about" aria-labelledby="about-title">
           <div class="about-heading"><h2 id="about-title">關於</h2><p>Grammend 字在必得，免費整理文字，也找回切錯輸入法的那句話。</p></div>
           <div class="feature-grid">
-            <article><span class="feature-icon" aria-hidden="true">Aa</span><h3>就在同一個方框編輯</h3><p>套用後直接接著打字。可復原上一步；若已有草稿，載入範例會附加在文末。</p></article>
-            <article><span class="feature-icon keyboard-icon" aria-hidden="true">ㄅ</span><h3>切錯輸入法，也接得住</h3><p>結合約五萬筆讀音與詞頻，從標準注音鍵盤按鍵找回中文，支援省略聲調與多個候選。</p></article>
+            <article><span class="feature-icon" aria-hidden="true">Aa</span><h3>就在同一個方框編輯</h3><p>點原字下方可看候選或直接替換。右上角「套用」每次只用排名第一的候選改一處，綠色與橘色都可以。</p></article>
+            <article><span class="feature-icon keyboard-icon" aria-hidden="true">ㄅ</span><h3>切錯輸入法，也接得住</h3><p>結合約五萬筆讀音與詞頻還原注音，再用中文詞庫和文法規則檢查。未確認的候選不會自動改動。</p></article>
             <article><span class="feature-icon" aria-hidden="true">⌁</span><h3>你的文字，只屬於你</h3><p>校正在本機執行，不上傳、不儲存、不用帳號，也沒有雲端 AI 費用。</p></article>
           </div>
           <p class="scope-note">V0.2 · 規則與詞頻校正，非完整語意潤稿。注音還原不適用於已選字成另一段中文的內容。<br /><a href="/mcbopomofo-license.txt">小麥注音詞庫資料與授權</a></p>
         </section>
       </main>
+      <div id="inline-candidates" class="inline-menu" popover="manual" role="dialog" aria-label="選擇替換文字" hidden></div>
       <div id="notification" class="notification" role="status" aria-live="polite" hidden></div>
     </div>
     <noscript><p class="noscript-message">文字校正需要 JavaScript，所有校正均在瀏覽器內執行。</p></noscript>

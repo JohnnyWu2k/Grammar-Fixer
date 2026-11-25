@@ -1,6 +1,8 @@
-import { MAX_TEXT_LENGTH, type AnalysisOptions, type Category, type Edit, type Mode, type Suggestion } from "../core/types";
+import { preferredSuggestion } from "../core/suggestion-priority";
+import { MAX_TEXT_LENGTH, type AnalysisOptions, type Category, type Mode, type Suggestion } from "../core/types";
 import { AnalyzerClient } from "./analyzer-client";
 import { createExampleGenerator, type ExampleChoice } from "./examples";
+import { confidenceLabel, EditorHighlights, visibleReplacement } from "./highlights";
 import { EditorState, type EditorSelection } from "./state";
 
 const LABELS: Record<Category, string> = {
@@ -38,6 +40,12 @@ export function mountApp(): void {
   const formatCount = new Intl.NumberFormat("en-US");
   const characterLimit = formatCount.format(MAX_TEXT_LENGTH);
   const spacing = required<HTMLInputElement>("#spacing");
+  const highlights = new EditorHighlights(
+    source, required("#editor-highlights"), required("#editor-highlights > div"),
+    required("#inline-fixes"), required("#inline-candidates"),
+    applySuggestion,
+  );
+  const details = required<HTMLDetailsElement>("#suggestion-details");
   const grid = required("#suggestions");
   const status = required("#analysis-status");
   const count = required("#suggestion-count");
@@ -46,11 +54,12 @@ export function mountApp(): void {
   const copy = required<HTMLButtonElement>("#copy");
   const undo = required<HTMLButtonElement>("#undo");
   const recheck = required<HTMLButtonElement>("#recheck");
-  const applyHigh = required<HTMLButtonElement>("#apply-high");
+  const applyPreferred = required<HTMLButtonElement>("#apply-preferred");
   const notification = required("#notification");
   const options: AnalysisOptions = { mode: "auto", spacing: false };
   const selections = new Map<string, string>();
   let suggestions: Suggestion[] = [];
+  let preferred: Suggestion | undefined;
   let limited = false;
   let pending = false;
   let revision = 0;
@@ -97,21 +106,28 @@ export function mountApp(): void {
     recheck.disabled = !length || composing;
   }
 
-  function toEdit(suggestion: Suggestion) {
-    return {
-      start: suggestion.start, end: suggestion.end, original: suggestion.original,
-      replacement: selections.get(suggestion.id) ?? suggestion.replacements[0] ?? suggestion.original,
-    };
+  function renderPreferred(suggestion?: Suggestion): void {
+    preferred = suggestion;
+    const label = "套用最優先的建議";
+    const replacement = suggestion?.replacements[0];
+    applyPreferred.disabled = replacement === undefined;
+    const action = suggestion && replacement !== undefined
+      ? `${label}：${suggestion.original ? `「${suggestion.original}」→` : ""}「${visibleReplacement(replacement)}」`
+      : label;
+    applyPreferred.title = action;
+    applyPreferred.setAttribute("aria-label", action);
   }
 
-  function apply(edits: Edit[]): void {
-    if (pending || composing) return;
+  function applySuggestion(
+    { id, start, end, original, replacements }: Suggestion, replacement = selections.get(id) ?? replacements[0],
+  ): void {
+    if (pending || composing || replacement === undefined) return;
     try {
-      const selection = state.apply(edits, readSelection());
+      const selection = state.apply([{ start, end, original, replacement }], readSelection());
       if (!selection) return;
       typing = undefined;
       updateEditor(selection);
-      notify(`已套用 ${edits.length} 項修正。`);
+      notify("已套用 1 項修正。");
       refresh(0);
     } catch (error) {
       notify(error instanceof RangeError ? "修正後會超過字元上限。" : "文字已更新，正在重新檢查。");
@@ -122,15 +138,18 @@ export function mountApp(): void {
   function suggestionCard(suggestion: Suggestion): HTMLElement {
     const card = element("article", "suggestion-card");
     card.dataset.category = suggestion.category;
+    card.dataset.confidence = suggestion.confidence;
     const top = element("div", "suggestion-top");
     top.append(element("span", "category-label", LABELS[suggestion.category]));
-    top.append(element("span", "confidence-label", suggestion.confidence === "high" ? "高信心" : "候選建議"));
-    const edit = element("p", "suggestion-edit");
-    edit.append(element("del", "suggestion-original", visibleText(suggestion.original)));
-    const arrow = element("span", "suggestion-arrow", "→");
-    arrow.setAttribute("aria-hidden", "true");
+    top.append(element("span", "confidence-label", confidenceLabel(suggestion.confidence)));
+    const original = element("button", "suggestion-original", visibleText(suggestion.original));
+    original.type = "button";
+    original.setAttribute("aria-label", `定位「${visibleText(suggestion.original)}」`);
+    original.addEventListener("click", () => highlights.reveal(suggestion));
     const replacement = selections.get(suggestion.id) ?? suggestion.replacements[0] ?? "";
-    edit.append(arrow, element("span", "suggestion-replacement", visibleText(replacement)));
+    const proposed = element("span", "suggestion-replacement", visibleText(replacement));
+    const edit = element("div", "suggestion-edit");
+    edit.append(original, proposed);
     const contextStart = Math.max(0, suggestion.start - 16);
     const contextEnd = Math.min(state.text.length, suggestion.end + 16);
     const context = `${contextStart > 0 ? "…" : ""}${state.text.slice(contextStart, contextEnd)}${contextEnd < state.text.length ? "…" : ""}`;
@@ -149,8 +168,7 @@ export function mountApp(): void {
           for (const item of candidates.querySelectorAll("button")) {
             item.setAttribute("aria-pressed", String(item === button));
           }
-          const label = edit.querySelector(".suggestion-replacement");
-          if (label) label.textContent = visibleText(candidate);
+          proposed.textContent = visibleText(candidate);
         });
         candidates.append(button);
       }
@@ -167,7 +185,7 @@ export function mountApp(): void {
     const accept = element("button", "suggestion-apply", "套用");
     accept.type = "button";
     accept.setAttribute("aria-label", `套用「${suggestion.original || "中英間距"}」的修正`);
-    accept.addEventListener("click", () => apply([toEdit(suggestion)]));
+    accept.addEventListener("click", () => applySuggestion(suggestion));
     actions.append(ignore, accept);
     card.append(actions);
     return card;
@@ -178,20 +196,29 @@ export function mountApp(): void {
     grid.setAttribute("aria-busy", String(busy));
     grid.inert = busy;
     if (busy) {
-      applyHigh.disabled = true;
+      highlights.render(state.text, []);
+      renderPreferred();
       status.textContent = composing ? "輸入法組字中" : "檢查中…";
       return;
     }
     const visible = state.visible(suggestions);
-    const high = visible.filter((suggestion) => suggestion.confidence === "high");
     count.textContent = String(visible.length);
-    applyHigh.disabled = !high.length;
-    applyHigh.textContent = high.length ? `套用高信心建議 (${high.length})` : "套用高信心建議";
-    grid.replaceChildren(...visible.map(suggestionCard));
+    renderPreferred(preferredSuggestion(visible));
+    highlights.render(state.text, visible);
+    details.hidden = !visible.length;
+    renderDetails(visible);
     status.textContent = !state.text.trim() ? "等待輸入"
       : limited ? "建議過多，顯示前 80 項"
-        : visible.length ? "選擇要套用的建議" : "目前沒有建議";
+        : visible.length ? "點文字下方的建議即可替換" : "目前沒有建議";
   }
+
+  function renderDetails(visible: Suggestion[]): void {
+    grid.replaceChildren(...(details.open ? visible.map(suggestionCard) : []));
+  }
+
+  details.addEventListener("toggle", () => {
+    if (!pending && !composing) renderDetails(state.visible(suggestions));
+  });
 
   function refresh(delay = 240): void {
     clearTimeout(analysisTimer);
@@ -347,10 +374,8 @@ export function mountApp(): void {
     state.resetIgnored();
     refresh(0);
   });
-  applyHigh.addEventListener("click", () => {
-    if (pending || composing) return;
-    const high = state.visible(suggestions).filter((suggestion) => suggestion.confidence === "high");
-    apply(high.map(toEdit));
+  applyPreferred.addEventListener("click", () => {
+    if (preferred) applySuggestion(preferred, preferred.replacements[0]);
   });
   copy.addEventListener("click", () => {
     if (!state.text || composing) return;

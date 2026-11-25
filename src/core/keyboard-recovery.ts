@@ -1,3 +1,4 @@
+import { refineChineseCandidate } from "./chinese";
 import { isProtected } from "./protected";
 import { isKnownWord, spellingCandidates } from "./spelling";
 import type { AnalysisOptions, Suggestion, TextRange } from "./types";
@@ -13,6 +14,7 @@ interface Reading extends TextRange {
 }
 
 const toneKeys = /[3467]/;
+const numericSyllable = /^[012589]{1,2}[3467]$/;
 const asciiPunctuation = /[,.;]/;
 const markedSeparator = /(?<=[3467])[,.;](?=[a-z0-9])(?![3467])/i;
 
@@ -102,11 +104,15 @@ function findReading(
 }
 
 function asSuggestion(reading: Reading): Recovery {
+  const refined = reading.candidates.map((candidate) => refineChineseCandidate(candidate.text));
+  const replacements = [...new Set(refined.flat())].slice(0, 5);
+  const checked = refined.some((candidates, index) =>
+    candidates.length > 1 || candidates[0] !== reading.candidates[index]?.text);
   return {
     start: reading.start, end: reading.end,
-    replacements: reading.candidates.map((candidate) => candidate.text),
+    replacements,
     category: "zhuyin", confidence: "medium",
-    message: `標準注音鍵盤：${toPhonetic(reading.raw)}`,
+    message: `標準注音鍵盤：${toPhonetic(reading.raw)}${checked ? "；已依中文用字規則檢查候選。" : ""}`,
   };
 }
 
@@ -118,7 +124,7 @@ export function recoverKeyboard(
   const keys = scanKeys(text);
   const tokens = Array.from(keys.matchAll(/[A-Za-z0-9,;./-]+/g));
   const suggestions: Recovery[] = [];
-  const eligible = (token: RegExpMatchArray & { index: number }) => {
+  const eligible = (token: RegExpMatchArray & { index: number }, allowNumericSyllable = false) => {
     const { index } = token;
     const raw = token[0];
     const end = index + raw.length;
@@ -127,7 +133,7 @@ export function recoverKeyboard(
     // Latin words intact rather than converting a substring of them.
     if (/[_'’\p{Script=Latin}]/u.test(keys[index - 1] ?? "")
       || /[_'’\p{Script=Latin}]/u.test(keys[end] ?? "")) return false;
-    return mode !== "auto" || (!hasEnglishEvidence(raw) && !isLiteral(raw));
+    return mode !== "auto" || (!hasEnglishEvidence(raw) && (allowNumericSyllable || !isLiteral(raw)));
   };
   for (let i = 0; i < tokens.length && suggestions.length <= MAX_SUGGESTIONS; i++) {
     const first = tokens[i];
@@ -151,12 +157,21 @@ export function recoverKeyboard(
     let last = i;
     for (let j = i; j < Math.min(i + 12, tokens.length); j++) {
       const token = tokens[j];
-      if (!token || !eligible(token)) break;
-      if (separator) break;
+      if (!token || separator) break;
+      const numericContinuation = mode === "auto" && j > i && numericSyllable.test(token[0]);
+      if (!eligible(token, numericContinuation)) break;
       const previous = tokens[j - 1];
       if (j > i && previous
         && !/^[ \t]+$/.test(keys.slice(previous.index + previous[0].length, token.index))) break;
       const candidate = findReading(keys, first.index, token.index + token[0].length, mode);
+      if (numericContinuation) {
+        // 503 can mean ㄓㄢˇ, but don't absorb a separate number unless the
+        // leading reading uses it to finish a longer, tone-matching dictionary word.
+        const matchesWord = ({ trailingWordSyllables, missingTones, impliedSplits }: ZhuyinCandidate) =>
+          trailingWordSyllables >= 3 && missingTones === 0 && impliedSplits === 0;
+        if (!candidate?.candidates[0] || !matchesWord(candidate.candidates[0])) break;
+        candidate.candidates = candidate.candidates.filter(matchesWord);
+      }
       if (candidate) {
         best = candidate;
         last = j;

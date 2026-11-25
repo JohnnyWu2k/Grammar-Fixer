@@ -30,6 +30,7 @@ export interface ZhuyinCandidate {
   score: number;
   syllables: number;
   wordSyllables: number;
+  trailingWordSyllables: number;
   strongestWord: number;
   missingTones: number;
   impliedSplits: number;
@@ -203,7 +204,7 @@ export function decodeZhuyin(keys: string): ZhuyinCandidate[] {
   const states: ZhuyinCandidate[][] = [];
   states[0] = [{
     text: "", score: 0, syllables: 0, wordSyllables: 0,
-    strongestWord: 0, missingTones: 0, impliedSplits: 0,
+    trailingWordSyllables: 0, strongestWord: 0, missingTones: 0, impliedSplits: 0,
   }];
   for (let start = 0; start < input.length; start++) {
     const prefixes = states[start];
@@ -216,6 +217,7 @@ export function decodeZhuyin(keys: string): ZhuyinCandidate[] {
           score: prefix.score + match.entry.score - 1.3 * match.missingTones - 2.2 * match.splits,
           syllables: prefix.syllables + match.length,
           wordSyllables: prefix.wordSyllables + (match.length > 1 ? match.length : 0),
+          trailingWordSyllables: match.length,
           strongestWord: Math.max(prefix.strongestWord, match.length > 1 ? match.entry.frequency : 0),
           missingTones: prefix.missingTones + match.missingTones,
           impliedSplits: prefix.impliedSplits + match.splits,

@@ -38,6 +38,18 @@ describe("standard Zhuyin keyboard", () => {
     expect(decodeZhuyin("su4cl3").map((item) => item.text)).not.toContain("你好");
     expect(decodeZhuyin("1l4fu03").map((item) => item.text)).not.toContain("抱歉");
     expect(decodeZhuyin("1l4fu 04").map((item) => item.text)).not.toContain("抱歉");
+    expect(decodeZhuyin("u4t.6ai4504").map((item) => item.text)).not.toContain("一籌莫展");
+  });
+  test("ranks curated idioms as whole words even without the extended dictionary", () => {
+    installZhuyinDictionary("");
+    try {
+      for (const keys of ["u4t.6ai4503", "ut.6ai4503", "u4t.ai50"]) {
+        expect(decodeZhuyin(keys)[0]).toMatchObject({ text: "一籌莫展", wordSyllables: 4 });
+      }
+      expect(decodeZhuyin(toKeys("ㄆㄛˋ ㄅㄨˋ ㄐㄧˊ ㄉㄞˋ"))[0]?.text).toBe("迫不及待");
+    } finally {
+      installZhuyinDictionary(dictionary);
+    }
   });
   test("does not rank the accidental 報七案 split for 抱歉", () => {
     const candidates = decodeZhuyin("1l4fu04");

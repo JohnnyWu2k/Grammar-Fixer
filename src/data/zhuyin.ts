@@ -1,6 +1,7 @@
 // Original common-word lexicon, MIT licensed with this project.
 // Format: text | syllables (standard Taiwan Zhuyin) | relative frequency.
 // Unmarked syllables use the first tone; ˙ is written after its syllable.
+// Fixed phrases can list both citation and spoken readings (e.g. ㄧ / ㄧˋ).
 export const ZHUYIN_LEXICON = `
 我|ㄨㄛˇ|1000
 你|ㄋㄧˇ|1000
@@ -362,4 +363,10 @@ export const ZHUYIN_LEXICON = `
 汽車|ㄑㄧˋ ㄔㄜ|300
 走路|ㄗㄡˇ ㄌㄨˋ|400
 旅遊|ㄌㄩˇ ㄧㄡˊ|300
+一籌莫展|ㄧ ㄔㄡˊ ㄇㄛˋ ㄓㄢˇ|500
+一籌莫展|ㄧˋ ㄔㄡˊ ㄇㄛˋ ㄓㄢˇ|500
+迫不及待|ㄆㄛˋ ㄅㄨˋ ㄐㄧˊ ㄉㄞˋ|500
+莫名其妙|ㄇㄛˋ ㄇㄧㄥˊ ㄑㄧˊ ㄇㄧㄠˋ|500
+再接再厲|ㄗㄞˋ ㄐㄧㄝ ㄗㄞˋ ㄌㄧˋ|500
+全神貫注|ㄑㄩㄢˊ ㄕㄣˊ ㄍㄨㄢˋ ㄓㄨˋ|500
 `;
